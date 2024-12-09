@@ -36,22 +36,29 @@ CFG.MODEL.ARCH = BLSTF
 adj_mx, _ = load_adj("datasets/" + CFG.DATASET_NAME +
                      "/adj_mx.pkl", "doubletransition")
 CFG.MODEL.PARAM = {
-    "num_nodes": 307,
-    "input_len": 12,
-    "output_len": 12,
-    "num_layer": 2,
-    "nhead": 3,
-    "dim_feedforward": 64,
-    "if_spatial": True,
-    "if_two_way": True,
+    "num_nodes": 170,
+    "input_len": CFG.DATASET_INPUT_LEN,
+    "output_len": CFG.DATASET_OUTPUT_LEN,
+
+    "fusion_num_step": 2,
+    "fusion_num_layer": 3,
+    "fusion_dim": 64,
+    "fusion_out_dim": 16,
+    "fusion_dropout": 0.2,
+
+    "if_forward": True,
+    "if_backward": True,
+    "adj_mx": [torch.tensor(i) for i in adj_mx],
     "node_dim": 64,
+    "nhead": 2,
+
     "if_T_i_D": True,
     "if_D_i_W": True,
     "temp_dim_tid": 32,
     "temp_dim_diw": 32,
     "time_of_day_size": 288,
     "day_of_week_size": 7,
-    "adj_mx": [torch.tensor(i) for i in adj_mx],
+
     "if_decouple": True,
 }
 CFG.MODEL.FORWARD_FEATURES = [0, 1, 2]  # traffic flow, time in day

@@ -1,10 +1,9 @@
 import torch
 from torch import nn
 
-from .mlp import MultiLayerPerceptron, GraphMLP
-from torch.nn import functional as F
-from .transformer import Transformer, TransformerEncoder, TransformerEncoderLayer, TransformerDecoder, \
-    TransformerDecoderLayer
+from .mlp import MultiLayerPerceptron, GraphMLP, FusionMLP
+from .transformer import TransformerDecoder, TransformerDecoderLayer, TransformerEncoder, TransformerEncoderLayer, \
+    Transformer
 
 device = 'cuda'
 
@@ -15,170 +14,112 @@ class BLSTF(nn.Module):
         super().__init__()
         # attributes
         self.num_nodes = model_args["num_nodes"]
-        self.node_dim = model_args["node_dim"]
         self.input_len = model_args["input_len"]
         self.output_len = model_args["output_len"]
-        self.num_layer = model_args["num_layer"]
-        self.nhead = model_args["nhead"]
-        self.dim_feedforward = model_args["dim_feedforward"]
-        self.temp_dim_tid = model_args["temp_dim_tid"]
-        self.temp_dim_diw = model_args["temp_dim_diw"]
-        self.time_of_day_size = model_args["time_of_day_size"]
-        self.day_of_week_size = model_args["day_of_week_size"]
-        self.if_time_in_day = model_args["if_T_i_D"]
-        self.if_day_in_week = model_args["if_D_i_W"]
-        self.if_spatial = model_args["if_spatial"]
-        self.if_two_way = model_args["if_two_way"]
         self.if_decouple = model_args["if_decouple"]
 
+        self.fusion_num_step = model_args["fusion_num_step"]
+        self.fusion_num_layer = model_args["fusion_num_layer"]
+        self.fusion_dim = model_args["fusion_dim"]
+        self.fusion_out_dim = model_args["fusion_out_dim"]
+        self.fusion_dropout = model_args["fusion_dropout"]
+
+        self.if_forward = model_args["if_forward"]
+        self.if_backward = model_args["if_backward"]
         self.adj_mx = adj_mx
-        self.hidden_dim = self.input_len + self.if_spatial * self.node_dim + \
-                          int(self.if_time_in_day) * self.temp_dim_tid + \
-                          int(self.if_day_in_week) * self.temp_dim_diw + \
-                          int(self.if_decouple) * self.input_len
+        self.node_dim = model_args["node_dim"]
+        self.nhead = model_args["nhead"]
+
+        self.if_time_in_day = model_args["if_T_i_D"]
+        self.if_day_in_week = model_args["if_D_i_W"]
+        self.temp_dim_tid = model_args["temp_dim_tid"]
+        self.temp_dim_diw = model_args["temp_dim_diw"]
+
+        self.graph_num = 1 * self.if_forward + 1 * self.if_backward
+
+        self.st_dim = (self.graph_num > 0) * self.node_dim + \
+                      self.if_time_in_day * self.temp_dim_tid + \
+                      self.if_day_in_week * self.temp_dim_diw
+
+        self.output_dim = self.fusion_num_step * self.fusion_out_dim
+
+        if self.if_forward:
+            self.adj_mx_forward_encoder = nn.Sequential(
+                GraphMLP(input_dim=self.num_nodes, hidden_dim=self.node_dim)
+            )
+        if self.if_backward:
+            self.adj_mx_backward_encoder = nn.Sequential(
+                GraphMLP(input_dim=self.num_nodes, hidden_dim=self.node_dim)
+            )
+
+        self.fusion_layers = nn.ModuleList([
+            FusionMLP(
+                input_dim=self.st_dim + 2 * self.input_len,
+                hidden_dim=self.st_dim + 2 * self.input_len,
+                out_dim=self.fusion_out_dim,
+                graph_num=self.graph_num,
+                first=True, **model_args)
+        ])
+        for _ in range(self.fusion_num_step - 1):
+            self.fusion_layers.append(
+                FusionMLP(input_dim=self.st_dim + 2 * self.input_len + self.fusion_out_dim,
+                          hidden_dim=self.st_dim + 2 * self.input_len + self.fusion_out_dim,
+                          out_dim=self.fusion_out_dim,
+                          graph_num=self.graph_num,
+                          first=False, **model_args)
+            )
+        if self.fusion_num_step > 1:
+            self.regression_layer = nn.Sequential(
+                *[MultiLayerPerceptron(input_dim=self.output_dim,
+                                       hidden_dim=self.output_dim,
+                                       dropout=self.fusion_dropout)
+                  for _ in range(self.fusion_num_layer)],
+                nn.Linear(in_features=self.output_dim, out_features=self.output_len, bias=True),
+            )
 
         if self.if_decouple:
             self.transformer = Transformer(d_model=self.input_len, nhead=self.nhead,
-                                           num_encoder_layers=self.num_layer, num_decoder_layers=self.num_layer,
-                                           dim_feedforward=self.dim_feedforward, batch_first=True)
+                                           num_encoder_layers=self.nhead, num_decoder_layers=self.nhead,
+                                           dim_feedforward=4 * self.input_len, batch_first=True)
 
-        if self.if_spatial:
-            self.adj_mx_encoder_1_1 = nn.Sequential(
-                *[GraphMLP(self.num_nodes, self.node_dim) for _ in range(1)],
-            )
-
-            self.adj_mx_encoder_2_1 = nn.Sequential(
-                *[GraphMLP(self.num_nodes, self.node_dim) for _ in range(1)],
-            )
-
-        if self.if_time_in_day:
-            self.time_in_day_emb_1 = nn.Parameter(
-                torch.empty(self.time_of_day_size, self.temp_dim_tid))
-            nn.init.xavier_uniform_(self.time_in_day_emb_1)
-
-            self.time_in_day_emb_2 = nn.Parameter(
-                torch.empty(self.time_of_day_size, self.temp_dim_tid))
-            nn.init.xavier_uniform_(self.time_in_day_emb_2)
-        if self.if_day_in_week:
-            self.day_in_week_emb_1 = nn.Parameter(
-                torch.empty(self.day_of_week_size, self.temp_dim_diw))
-            nn.init.xavier_uniform_(self.day_in_week_emb_1)
-
-            self.day_in_week_emb_2 = nn.Parameter(
-                torch.empty(self.day_of_week_size, self.temp_dim_diw))
-            nn.init.xavier_uniform_(self.day_in_week_emb_2)
-
-        self.graph_model_1_1 = nn.Sequential(
-            *[MultiLayerPerceptron(self.hidden_dim, self.hidden_dim) for _ in range(3)],
-        )
-        self.graph_model_1_2 = nn.Sequential(
-            *[MultiLayerPerceptron(self.hidden_dim + self.output_len, self.hidden_dim + self.output_len) for _ in
-              range(3)],
-        )
-
-        if self.if_two_way:
-            self.graph_model_2_1 = nn.Sequential(
-                *[MultiLayerPerceptron(self.hidden_dim, self.hidden_dim) for _ in range(3)],
-            )
-            self.graph_model_2_2 = nn.Sequential(
-                *[MultiLayerPerceptron(self.hidden_dim + self.output_len, self.hidden_dim + self.output_len) for _ in
-                  range(3)],
-            )
-
-        if self.if_two_way:
-            self.regression_layer_1 = nn.Sequential(
-                *[MultiLayerPerceptron(2 * self.hidden_dim, 2 * self.hidden_dim) for _ in range(3)],
-                nn.Linear(in_features=2 * self.hidden_dim, out_features=self.output_len, bias=True),
-            )
-
-            self.regression_layer_2 = nn.Sequential(
-                *[MultiLayerPerceptron(2 * (self.hidden_dim + self.output_len), 2 * (self.hidden_dim + self.output_len))
-                  for _ in range(3)],
-                nn.Linear(in_features=2 * (self.hidden_dim + self.output_len), out_features=self.output_len, bias=True),
-            )
-        else:
-            self.regression_layer_1 = nn.Sequential(
-                nn.Linear(in_features=self.hidden_dim, out_features=self.output_len, bias=True),
-            )
-
-            self.regression_layer_2 = nn.Sequential(
-                nn.Linear(in_features=self.hidden_dim + self.output_len, out_features=self.output_len, bias=True),
-            )
-
-        self.regression_layer = nn.Sequential(
-            *[MultiLayerPerceptron(2 * self.output_len, 2 * self.output_len) for _ in range(3)],
-            nn.Linear(in_features=2 * self.output_len, out_features=self.output_len, bias=True),
-        )
-
-    def forward(self, history_data: torch.Tensor, future_data: torch.Tensor, batch_seen: int, epoch: int, train: bool,
-                **kwargs) -> torch.Tensor:
+    def forward(self, history_data: torch.Tensor, future_data: torch.Tensor,
+                batch_seen: int, epoch: int, **kwargs) -> torch.Tensor:
 
         input_data = history_data[..., 0].transpose(1, 2)
         batch_size, num_nodes, _ = input_data.shape
-        noise_emb = []
+
+        periodicity = []
+        noise = []
         if self.if_decouple:
             input_data_periodicity = self.transformer(input_data, input_data)
             input_data_noise = input_data - input_data_periodicity
-            time_series_emb = input_data_periodicity
-            noise_emb.append(input_data_noise)
+            periodicity.append(input_data_periodicity)
+            noise.append(input_data_noise)
         else:
-            time_series_emb = input_data
+            periodicity.append(input_data)
 
-        tem_emb_1 = []
-        tem_emb_2 = []
-        if self.if_time_in_day:
-            t_i_d_data = history_data[..., 1] * self.time_of_day_size
-            tem_emb_1.append(self.time_in_day_emb_1[(t_i_d_data[:, -1, :]).type(torch.LongTensor)])
-            tem_emb_2.append(self.time_in_day_emb_2[(t_i_d_data[:, -1, :]).type(torch.LongTensor)])
-        if self.if_day_in_week:
-            d_i_w_data = history_data[..., 2]
-            tem_emb_1.append(self.day_in_week_emb_1[(d_i_w_data[:, -1, :]).type(torch.LongTensor)])
-            tem_emb_2.append(self.day_in_week_emb_2[(d_i_w_data[:, -1, :]).type(torch.LongTensor)])
+        time_series_emb = [torch.cat(periodicity + noise, dim=2)]
 
-        node_emb_forward = []
-        node_emb_backward = []
-        if self.if_spatial:
-            node_emb_1_1 = self.adj_mx[0].to(device)
-            node_emb_2_1 = self.adj_mx[1].to(device)
+        node_forward_emb = []
+        node_backward_emb = []
+        if self.if_forward:
+            node_forward = self.adj_mx[0].to(device)
+            node_forward = self.adj_mx_forward_encoder(node_forward.unsqueeze(0)).expand(batch_size, -1, -1)
+            node_forward_emb.append(node_forward)
 
-            node_emb_1_1 = self.adj_mx_encoder_1_1(node_emb_1_1.unsqueeze(0)).expand(batch_size, -1, -1)
-            node_emb_2_1 = self.adj_mx_encoder_2_1(node_emb_2_1.unsqueeze(0)).expand(batch_size, -1, -1)
+        if self.if_backward:
+            node_backward = self.adj_mx[1].to(device)
+            node_backward = self.adj_mx_backward_encoder(node_backward.unsqueeze(0)).expand(batch_size, -1, -1)
+            node_backward_emb.append(node_backward)
 
-            node_emb_forward.append(node_emb_1_1)
-            node_emb_backward.append(node_emb_2_1)
+        predicts = []
+        predict_emb = []
+        for index, layer in enumerate(self.fusion_layers):
+            predict = layer(history_data, time_series_emb, predict_emb, node_forward_emb, node_backward_emb)
+            predicts.append(predict)
+            predict_emb = [predict]
 
-        if self.if_spatial and self.if_two_way:
-            hidden_1_1 = torch.cat([time_series_emb] + node_emb_forward + tem_emb_1 + noise_emb, dim=2)
-            hidden_2_1 = torch.cat([time_series_emb] + node_emb_backward + tem_emb_1 + noise_emb, dim=2)
-            res_1_1 = self.graph_model_1_1(hidden_1_1)
-            res_2_1 = self.graph_model_2_1(hidden_2_1)
-
-            all_hidden_1 = [res_1_1, res_2_1]
-            prediction_1 = self.regression_layer_1(torch.cat(all_hidden_1, dim=2))
-
-            hidden_1_2 = torch.cat([time_series_emb] + [prediction_1] + node_emb_forward + tem_emb_2 + noise_emb,
-                                   dim=2)
-            hidden_2_2 = torch.cat([time_series_emb] + [prediction_1] + node_emb_backward + tem_emb_2 + noise_emb,
-                                   dim=2)
-            res_1_2 = self.graph_model_1_2(hidden_1_2)
-            res_2_2 = self.graph_model_2_2(hidden_2_2)
-
-            all_hidden_2 = [res_1_2, res_2_2]
-            prediction_2 = self.regression_layer_2(torch.cat(all_hidden_2, dim=2))
-
-            prediction = [prediction_1, prediction_2]
-            prediction = self.regression_layer(torch.cat(prediction, dim=2))
-        else:
-            hidden_1_1 = torch.cat([time_series_emb] + node_emb_forward + tem_emb_1 + noise_emb, dim=2)
-            res_1_1 = self.graph_model_1_1(hidden_1_1)
-            prediction_1 = self.regression_layer_1(res_1_1)
-
-            hidden_1_2 = torch.cat([time_series_emb] + [prediction_1] + node_emb_forward + tem_emb_2 + noise_emb,
-                                   dim=2)
-            res_1_2 = self.graph_model_1_2(hidden_1_2)
-            prediction_2 = self.regression_layer_2(res_1_2)
-
-            prediction = [prediction_1, prediction_2]
-            prediction = self.regression_layer(torch.cat(prediction, dim=2))
-
-        return prediction.transpose(1, 2).unsqueeze(-1)
+        predicts = torch.cat(predicts, dim=2)
+        if self.fusion_num_step > 1:
+            predicts = self.regression_layer(predicts)
+        return predicts.transpose(1, 2).unsqueeze(-1)

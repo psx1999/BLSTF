@@ -36,21 +36,28 @@ adj_mx, _ = load_adj("datasets/" + CFG.DATASET_NAME +
                      "/adj_mx.pkl", "doubletransition")
 CFG.MODEL.PARAM = {
     "num_nodes": 170,
-    "input_len": 12,
-    "output_len": 12,
-    "num_layer": 3,
-    "nhead": 4,
-    "dim_feedforward": 32,
-    "if_spatial": True,
-    "if_two_way": True,
+    "input_len": CFG.DATASET_INPUT_LEN,
+    "output_len": CFG.DATASET_OUTPUT_LEN,
+
+    "fusion_num_step": 2,
+    "fusion_num_layer": 3,
+    "fusion_dim": 64,
+    "fusion_out_dim": 16,
+    "fusion_dropout": 0.2,
+
+    "if_forward": True,
+    "if_backward": True,
+    "adj_mx": [torch.tensor(i) for i in adj_mx],
     "node_dim": 64,
+    "nhead": 2,
+
     "if_T_i_D": True,
     "if_D_i_W": True,
     "temp_dim_tid": 32,
     "temp_dim_diw": 32,
     "time_of_day_size": 288,
     "day_of_week_size": 7,
-    "adj_mx": [torch.tensor(i) for i in adj_mx],
+
     "if_decouple": True,
 }
 CFG.MODEL.FORWARD_FEATURES = [0, 1, 2]  # traffic flow, time in day
@@ -68,7 +75,7 @@ CFG.TRAIN.OPTIM.PARAM = {
 CFG.TRAIN.LR_SCHEDULER = EasyDict()
 CFG.TRAIN.LR_SCHEDULER.TYPE = "MultiStepLR"
 CFG.TRAIN.LR_SCHEDULER.PARAM = {
-    "milestones": [1, 50, 80],
+    "milestones": [1, 40, 80, 120, 160],
     "gamma": 0.5
 }
 
@@ -76,7 +83,7 @@ CFG.TRAIN.LR_SCHEDULER.PARAM = {
 CFG.TRAIN.CLIP_GRAD_PARAM = {
     "max_norm": 5.0
 }
-CFG.TRAIN.NUM_EPOCHS = 150
+CFG.TRAIN.NUM_EPOCHS = 200
 CFG.TRAIN.CKPT_SAVE_DIR = os.path.join(
     "checkpoints",
     "_".join([CFG.MODEL.NAME, str(CFG.TRAIN.NUM_EPOCHS)])
