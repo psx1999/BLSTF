@@ -36,7 +36,7 @@ CFG.MODEL.ARCH = BLSTF
 adj_mx, _ = load_adj("datasets/" + CFG.DATASET_NAME +
                      "/adj_mx.pkl", "doubletransition")
 CFG.MODEL.PARAM = {
-    "num_nodes": 170,
+    "num_nodes": 883,
     "input_len": CFG.DATASET_INPUT_LEN,
     "output_len": CFG.DATASET_OUTPUT_LEN,
 
