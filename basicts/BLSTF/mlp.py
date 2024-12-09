@@ -38,25 +38,19 @@ class FusionMLP(nn.Module):
             nn.init.xavier_uniform_(self.day_in_week_emb)
 
         if self.graph_num > 1:
+            self.fusion_graph_model = nn.Sequential(
+                *[MultiLayerPerceptron(input_dim=self.input_dim,
+                                       hidden_dim=self.hidden_dim,
+                                       dropout=self.fusion_dropout)
+                  for _ in range(self.fusion_num_layer)],
+            )
             if self.if_forward:
-                self.fusion_graph_forward = nn.Sequential(
-                    *[MultiLayerPerceptron(input_dim=self.input_dim,
-                                           hidden_dim=self.hidden_dim,
-                                           dropout=self.fusion_dropout)
-                      for _ in range(self.fusion_num_layer)],
-                    nn.Linear(in_features=self.hidden_dim, out_features=self.fusion_dim,
-                              bias=True)
-                )
+                self.fusion_forward_linear = nn.Linear(in_features=self.hidden_dim, out_features=self.fusion_dim,
+                                                       bias=True)
 
             if self.if_backward:
-                self.fusion_graph_backward = nn.Sequential(
-                    *[MultiLayerPerceptron(input_dim=self.input_dim,
-                                           hidden_dim=self.hidden_dim,
-                                           dropout=self.fusion_dropout)
-                      for _ in range(self.fusion_num_layer)],
-                    nn.Linear(in_features=self.hidden_dim, out_features=self.fusion_dim,
-                              bias=True)
-                )
+                self.fusion_backward_linear = nn.Linear(in_features=self.hidden_dim, out_features=self.fusion_dim,
+                                                        bias=True)
 
             self.fusion_model = nn.Sequential(
                 *[MultiLayerPerceptron(input_dim=self.graph_num * self.fusion_dim,
@@ -67,11 +61,11 @@ class FusionMLP(nn.Module):
             )
         else:
             self.fusion_model = nn.Sequential(
-                *[MultiLayerPerceptron(input_dim=self.input_dim,
-                                       hidden_dim=self.hidden_dim,
-                                       dropout=self.fusion_dropout)
-                  for _ in range(self.fusion_num_layer)],
-            )
+                    *[MultiLayerPerceptron(input_dim=self.input_dim,
+                                           hidden_dim=self.hidden_dim,
+                                           dropout=self.fusion_dropout)
+                      for _ in range(self.fusion_num_layer)],
+                )
             self.fusion_linear = nn.Linear(in_features=self.hidden_dim, out_features=self.out_dim, bias=True)
 
     def forward(self, history_data,
@@ -90,10 +84,12 @@ class FusionMLP(nn.Module):
             hidden_backward = []
             if self.if_forward:
                 forward_emb = torch.cat(time_series_emb + predict_emb + node_forward_emb + tem_emb, dim=2)
-                hidden_forward = [self.fusion_graph_forward(forward_emb)]
+                hidden_forward = self.fusion_graph_model(forward_emb)
+                hidden_forward = [self.fusion_forward_linear(hidden_forward)]
             if self.if_backward:
                 backward_emb = torch.cat(time_series_emb + predict_emb + node_backward_emb + tem_emb, dim=2)
-                hidden_backward = [self.fusion_graph_backward(backward_emb)]
+                hidden_backward = self.fusion_graph_model(backward_emb)
+                hidden_backward = [self.fusion_backward_linear(hidden_backward)]
 
             hidden = torch.cat(hidden_forward + hidden_backward, dim=2)
             predict = self.fusion_model(hidden)
