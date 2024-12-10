@@ -45,8 +45,8 @@ CFG.MODEL.PARAM = {
     "fusion_out_dim": 16,
     "fusion_dropout": 0.2,
 
-    "if_forward": True,
-    "if_backward": True,
+    "if_forward": False,
+    "if_backward": False,
     "if_ada": True,
     "adj_mx": [torch.tensor(i) for i in adj_mx],
     "node_dim": 64,
