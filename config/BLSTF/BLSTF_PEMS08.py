@@ -47,6 +47,7 @@ CFG.MODEL.PARAM = {
 
     "if_forward": True,
     "if_backward": True,
+    "if_ada": True,
     "adj_mx": [torch.tensor(i) for i in adj_mx],
     "node_dim": 64,
     "nhead": 2,

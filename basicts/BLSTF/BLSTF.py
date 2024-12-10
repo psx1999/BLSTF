@@ -26,6 +26,7 @@ class BLSTF(nn.Module):
 
         self.if_forward = model_args["if_forward"]
         self.if_backward = model_args["if_backward"]
+        self.if_ada = model_args["if_ada"]
         self.adj_mx = adj_mx
         self.node_dim = model_args["node_dim"]
         self.nhead = model_args["nhead"]
@@ -35,7 +36,7 @@ class BLSTF(nn.Module):
         self.temp_dim_tid = model_args["temp_dim_tid"]
         self.temp_dim_diw = model_args["temp_dim_diw"]
 
-        self.graph_num = 1 * self.if_forward + 1 * self.if_backward
+        self.graph_num = 1 * self.if_forward + 1 * self.if_backward + 1 * self.if_ada
 
         self.st_dim = (self.graph_num > 0) * self.node_dim + \
                       self.if_time_in_day * self.temp_dim_tid + \
@@ -51,6 +52,9 @@ class BLSTF(nn.Module):
             self.adj_mx_backward_encoder = nn.Sequential(
                 GraphMLP(input_dim=self.num_nodes, hidden_dim=self.node_dim)
             )
+        if self.if_ada:
+            self.adj_mx_ada = nn.Parameter(torch.empty(self.num_nodes, self.node_dim))
+            nn.init.xavier_uniform_(self.adj_mx_ada)
 
         self.fusion_layers = nn.ModuleList([
             FusionMLP(
@@ -102,6 +106,7 @@ class BLSTF(nn.Module):
 
         node_forward_emb = []
         node_backward_emb = []
+        node_ada_emb = []
         if self.if_forward:
             node_forward = self.adj_mx[0].to(device)
             node_forward = self.adj_mx_forward_encoder(node_forward.unsqueeze(0)).expand(batch_size, -1, -1)
@@ -112,10 +117,14 @@ class BLSTF(nn.Module):
             node_backward = self.adj_mx_backward_encoder(node_backward.unsqueeze(0)).expand(batch_size, -1, -1)
             node_backward_emb.append(node_backward)
 
+        if self.if_ada:
+            node_ada_emb.append(self.adj_mx_ada.unsqueeze(0).expand(batch_size, -1, -1))
+
         predicts = []
         predict_emb = []
         for index, layer in enumerate(self.fusion_layers):
-            predict = layer(history_data, time_series_emb, predict_emb, node_forward_emb, node_backward_emb)
+            predict = layer(history_data, time_series_emb, predict_emb,
+                            node_forward_emb, node_backward_emb, node_ada_emb)
             predicts.append(predict)
             predict_emb = [predict]
 

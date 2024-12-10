@@ -17,6 +17,7 @@ class FusionMLP(nn.Module):
 
         self.if_forward = model_args["if_forward"]
         self.if_backward = model_args["if_backward"]
+        self.if_ada = model_args["if_ada"]
         self.node_dim = model_args["node_dim"]
         self.nhead = model_args["nhead"]
 
@@ -51,6 +52,9 @@ class FusionMLP(nn.Module):
             if self.if_backward:
                 self.fusion_backward_linear = nn.Linear(in_features=self.hidden_dim, out_features=self.fusion_dim,
                                                         bias=True)
+            if self.if_ada:
+                self.fusion_ada_linear = nn.Linear(in_features=self.hidden_dim, out_features=self.fusion_dim,
+                                                   bias=True)
 
             self.fusion_model = nn.Sequential(
                 *[MultiLayerPerceptron(input_dim=self.graph_num * self.fusion_dim,
@@ -61,16 +65,16 @@ class FusionMLP(nn.Module):
             )
         else:
             self.fusion_model = nn.Sequential(
-                    *[MultiLayerPerceptron(input_dim=self.input_dim,
-                                           hidden_dim=self.hidden_dim,
-                                           dropout=self.fusion_dropout)
-                      for _ in range(self.fusion_num_layer)],
-                )
+                *[MultiLayerPerceptron(input_dim=self.input_dim,
+                                       hidden_dim=self.hidden_dim,
+                                       dropout=self.fusion_dropout)
+                  for _ in range(self.fusion_num_layer)],
+            )
             self.fusion_linear = nn.Linear(in_features=self.hidden_dim, out_features=self.out_dim, bias=True)
 
     def forward(self, history_data,
                 time_series_emb, predict_emb,
-                node_forward_emb, node_backward_emb):
+                node_forward_emb, node_backward_emb, node_ada_emb):
         tem_emb = []
         if self.if_time_in_day:
             t_i_d_data = history_data[..., 1] * self.time_of_day_size
@@ -82,6 +86,7 @@ class FusionMLP(nn.Module):
         if self.graph_num > 1:
             hidden_forward = []
             hidden_backward = []
+            hidden_ada = []
             if self.if_forward:
                 forward_emb = torch.cat(time_series_emb + predict_emb + node_forward_emb + tem_emb, dim=2)
                 hidden_forward = self.fusion_graph_model(forward_emb)
@@ -91,12 +96,17 @@ class FusionMLP(nn.Module):
                 hidden_backward = self.fusion_graph_model(backward_emb)
                 hidden_backward = [self.fusion_backward_linear(hidden_backward)]
 
-            hidden = torch.cat(hidden_forward + hidden_backward, dim=2)
+            if self.if_ada:
+                ada_emb = torch.cat(time_series_emb + predict_emb + node_ada_emb + tem_emb, dim=2)
+                hidden_ada = self.fusion_graph_model(ada_emb)
+                hidden_ada = [self.fusion_ada_linear(hidden_ada)]
+
+            hidden = torch.cat(hidden_forward + hidden_backward + hidden_ada, dim=2)
             predict = self.fusion_model(hidden)
             return predict
         else:
             hidden = torch.cat(
-                time_series_emb + predict_emb + node_forward_emb + node_backward_emb + tem_emb, dim=2)
+                time_series_emb + predict_emb + node_forward_emb + node_backward_emb + node_ada_emb + tem_emb, dim=2)
             hidden = self.fusion_model(hidden)
             predict = self.fusion_linear(hidden)
         return predict
