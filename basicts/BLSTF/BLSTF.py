@@ -58,16 +58,16 @@ class BLSTF(nn.Module):
 
         self.fusion_layers = nn.ModuleList([
             FusionMLP(
-                input_dim=self.st_dim + 2 * self.input_len,
-                hidden_dim=self.st_dim + 2 * self.input_len,
+                input_dim=self.st_dim + self.input_len + self.input_len * self.if_decouple,
+                hidden_dim=self.st_dim + self.input_len + self.input_len * self.if_decouple,
                 out_dim=self.fusion_out_dim,
                 graph_num=self.graph_num,
                 first=True, **model_args)
         ])
         for _ in range(self.fusion_num_step - 1):
             self.fusion_layers.append(
-                FusionMLP(input_dim=self.st_dim + 2 * self.input_len + self.fusion_out_dim,
-                          hidden_dim=self.st_dim + 2 * self.input_len + self.fusion_out_dim,
+                FusionMLP(input_dim=self.st_dim + self.input_len + self.input_len * self.if_decouple + self.fusion_out_dim,
+                          hidden_dim=self.st_dim + self.input_len + self.input_len * self.if_decouple + self.fusion_out_dim,
                           out_dim=self.fusion_out_dim,
                           graph_num=self.graph_num,
                           first=False, **model_args)
