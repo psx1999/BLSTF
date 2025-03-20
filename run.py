@@ -13,7 +13,7 @@ torch.set_num_threads(1) # aviod high cpu avg usage
 def parse_args():
     parser = ArgumentParser(description="Run time series forecasting model in BasicTS framework!")
 
-    parser.add_argument("-c", "--cfg", default="config/BLSTF/BLSTF_PEMS04.py", help="training config")
+    parser.add_argument("-c", "--cfg", default="config/BLSTF/BLSTF_PEMS08.py", help="training config")
 
     parser.add_argument("--gpus", default="0", help="visible gpus")
     return parser.parse_args()
